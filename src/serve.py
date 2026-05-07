@@ -1,37 +1,36 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from google.cloud import storage
 import joblib
 import os
 
 app = FastAPI()
 
-GCS_BUCKET = os.environ["GCS_BUCKET"]
-GCS_MODEL_KEY = "models/latest/model.pkl"
+# Cấu hình Cloud Provider và Bucket (Hỗ trợ cả AWS S3 và GCP GCS)
+CLOUD_PROVIDER = os.environ.get("CLOUD_PROVIDER", "aws").lower()
+CLOUD_BUCKET = os.environ.get("CLOUD_BUCKET") or os.environ.get("GCS_BUCKET") or os.environ.get("AWS_BUCKET")
+MODEL_KEY = "models/latest/model.pkl"
 MODEL_PATH = os.path.expanduser("~/models/model.pkl")
 
 
 def download_model():
-    """
-    Tai file model.pkl tu GCS ve may khi server khoi dong.
-
-    Ham nay duoc goi mot lan khi module duoc import. Su dung
-    GOOGLE_APPLICATION_CREDENTIALS de xac thuc (duoc dat trong systemd service).
-    """
-    # TODO 1: Tao storage.Client()
-    # client = storage.Client()
-
-    # TODO 2: Lay bucket va blob tuong ung
-    # bucket = client.bucket(GCS_BUCKET)
-    # blob   = bucket.blob(GCS_MODEL_KEY)
-
-    # TODO 3: Tai file model xuong may
-    # blob.download_to_filename(MODEL_PATH)
-
-    # TODO 4: In thong bao thanh cong
-    # print("Model da duoc tai xuong tu GCS.")
-
-    pass  # xoa dong nay sau khi hoan thanh tat ca TODO ben tren
+    """Tải file model.pkl từ Cloud Storage về máy khi server khởi động."""
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    
+    if not CLOUD_BUCKET:
+        raise ValueError("Chưa thiết lập tên Bucket qua biến môi trường CLOUD_BUCKET!")
+        
+    if CLOUD_PROVIDER == "gcp":
+        from google.cloud import storage
+        client = storage.Client()
+        bucket = client.bucket(CLOUD_BUCKET)
+        blob = bucket.blob(MODEL_KEY)
+        blob.download_to_filename(MODEL_PATH)
+        print("Model đã được tải xuống từ Google Cloud Storage.")
+    else:  # Mặc định là AWS S3
+        import boto3
+        s3 = boto3.client("s3")
+        s3.download_file(CLOUD_BUCKET, MODEL_KEY, MODEL_PATH)
+        print("Model đã được tải xuống từ AWS S3.")
 
 
 download_model()
@@ -44,40 +43,21 @@ class PredictRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    """
-    Endpoint kiem tra suc khoe server.
-    GitHub Actions goi endpoint nay sau khi deploy de xac nhan server dang chay.
-
-    Tra ve: {"status": "ok"}
-    """
-    # TODO 5: Tra ve dict {"status": "ok"}
-    pass  # xoa dong nay sau khi hoan thanh
+    """Endpoint kiểm tra sức khỏe server."""
+    return {"status": "ok"}
 
 
 @app.post("/predict")
 def predict(req: PredictRequest):
-    """
-    Endpoint suy luan chinh.
-
-    Dau vao : JSON {"features": [f1, f2, ..., f12]}
-    Dau ra  : JSON {"prediction": <0|1|2>, "label": <"thap"|"trung_binh"|"cao">}
-
-    Thu tu 12 dac trung (khop voi thu tu trong FEATURE_NAMES cua test):
-        fixed_acidity, volatile_acidity, citric_acid, residual_sugar,
-        chlorides, free_sulfur_dioxide, total_sulfur_dioxide, density,
-        pH, sulphates, alcohol, wine_type
-    """
-    # TODO 6: Kiem tra so luong dac trung.
-    # Neu len(req.features) != 12, raise HTTPException(status_code=400, ...)
-
-    # TODO 7: Goi model.predict([req.features]) de lay ket qua du doan.
-    # pred = model.predict(...)
-
-    # TODO 8: Tra ve dict chua "prediction" (int) va "label" (string).
-    # Nhan tuong ung: 0 -> "thap", 1 -> "trung_binh", 2 -> "cao"
-    # return {"prediction": ..., "label": ...}
-
-    pass  # xoa dong nay sau khi hoan thanh tat ca TODO ben tren
+    """Endpoint suy luận chính."""
+    if len(req.features) != 12:
+        raise HTTPException(status_code=400, detail="Expected 12 features (wine quality)")
+    pred = model.predict([req.features])[0]
+    labels = {0: "thap", 1: "trung_binh", 2: "cao"}
+    return {
+        "prediction": int(pred),
+        "label": labels.get(int(pred), "unknown")
+    }
 
 
 if __name__ == "__main__":
